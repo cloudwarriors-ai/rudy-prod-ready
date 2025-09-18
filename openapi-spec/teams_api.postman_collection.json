@@ -1,0 +1,177 @@
+{
+  "info": {
+    "name": "Teams SDK API",
+    "description": "Postman collection for Teams SDK API with authentication and operations",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Connect Authentication",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('session_id', response.session_id);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{base_url}}/auth/connect",
+          "host": ["{{base_url}}"],
+          "path": ["auth", "connect"]
+        }
+      }
+    },
+    {
+      "name": "Check Auth Status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/auth/status?session_id={{session_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["auth", "status"],
+          "query": [
+            {
+              "key": "session_id",
+              "value": "{{session_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"accountEnabled\": true, \"displayName\": \"John Doe\", \"userPrincipalName\": \"john.doe@yourtenant.onmicrosoft.com\", \"mailNickname\": \"johndoe\", \"password\": \"TempP@ssw0rd!\", \"forceChangePassword\": true}"
+        },
+        "url": {
+          "raw": "{{base_url}}/users?session_id={{session_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["users"],
+          "query": [
+            {
+              "key": "session_id",
+              "value": "{{session_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Team",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"template\": \"standard\", \"displayName\": \"Support\", \"description\": \"Support Team migrated from RingCentral\", \"visibility\": \"private\"}"
+        },
+        "url": {
+          "raw": "{{base_url}}/teams?session_id={{session_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["teams"],
+          "query": [
+            {
+              "key": "session_id",
+              "value": "{{session_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Add User to Team",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"user\": \"john.doe@yourtenant.onmicrosoft.com\"}"
+        },
+        "url": {
+          "raw": "{{base_url}}/teams/Support/users?session_id={{session_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["teams", "Support", "users"],
+          "query": [
+            {
+              "key": "session_id",
+              "value": "{{session_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Assign Phone Number",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"phoneNumber\": \"+15555550123\", \"phoneNumberType\": \"DirectRouting\"}"
+        },
+        "url": {
+          "raw": "{{base_url}}/users/john.doe@yourtenant.onmicrosoft.com/phone?session_id={{session_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["users", "john.doe@yourtenant.onmicrosoft.com", "phone"],
+          "query": [
+            {
+              "key": "session_id",
+              "value": "{{session_id}}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

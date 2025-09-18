@@ -1,0 +1,40 @@
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Auth keys (sensitive)
+auth-keys/
+*.pfx
+*.key
+*.crt
+
+# Environment variables
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.temp
