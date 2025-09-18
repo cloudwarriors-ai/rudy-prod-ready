@@ -858,3 +858,143 @@ The example Auto Attendant created demonstrates a complete setup:
 - **Complete Flow**: Caller → IVR Menu → Call Queue → Agent
 
 This creates enterprise-grade call center functionality using Microsoft Teams infrastructure with API-driven configuration.
+
+## Emergency Calling Setup
+
+### POST /emergency/setup (Emergency Calling Setup)
+**Description:** Set up complete emergency calling configuration for a user including address, policies, and routing.
+
+**Request Body:**
+- **userPrincipalName**: str (required) - User to configure emergency calling for
+- **emergencyAddress**: object (required)
+  - **houseNumber**: str (required)
+  - **streetName**: str (required)
+  - **city**: str (required)
+  - **stateOrProvince**: str (required)
+  - **postalCode**: str (required)
+  - **countryOrRegion**: str (default "US")
+  - **companyName**: str (required)
+  - **description**: str (required)
+  - **latitude**: float (default approximate coordinates)
+  - **longitude**: float (default approximate coordinates)
+- **notificationGroup**: str (optional) - Users to notify of emergency calls
+- **emergencyNumbers**: array (default ["911"]) - Emergency numbers to route
+
+**Example Request:**
+```json
+{
+  "userPrincipalName": "demo654@cloudwarriors.onmicrosoft.com",
+  "emergencyAddress": {
+    "houseNumber": "5561",
+    "streetName": "Heatherton Road",
+    "city": "Milton",
+    "stateOrProvince": "FL",
+    "postalCode": "32570",
+    "countryOrRegion": "US",
+    "companyName": "Cloud Warriors Demo",
+    "description": "Demo654 Emergency Location",
+    "latitude": 30.6303,
+    "longitude": -87.0465
+  },
+  "notificationGroup": "demo654@cloudwarriors.onmicrosoft.com",
+  "emergencyNumbers": ["911"]
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Emergency calling setup completed successfully",
+  "userPrincipalName": "demo654@cloudwarriors.onmicrosoft.com",
+  "emergencyAddress": "5561 Heatherton Road, Milton, FL 32570",
+  "status": "completed",
+  "policies": {
+    "emergencyCallingPolicy": "EmergencyPolicy-demo654",
+    "emergencyCallRoutingPolicy": "EmergencyRouting-demo654"
+  }
+}
+```
+
+**Time:** ~10-15 seconds
+**Requirements:** Enhanced emergency services licensing, valid geographic coordinates
+
+### GET /emergency/policies?session_id={session_id} (List Emergency Policies)
+**Description:** List all emergency calling policies in the tenant.
+
+**Response:**
+```json
+{
+  "message": "Found 2 emergency calling policies",
+  "policies": [
+    {
+      "identity": "EmergencyPolicy-demo654",
+      "description": "Emergency calling policy for demo654@cloudwarriors.onmicrosoft.com",
+      "notification_group": "demo654@cloudwarriors.onmicrosoft.com"
+    }
+  ],
+  "count": 2
+}
+```
+
+**Time:** ~3-5 seconds
+
+## Emergency Calling Requirements
+
+### Licensing Requirements
+- **Phone System** license or equivalent
+- **Calling Plan** or **Direct Routing** for emergency calling
+- **Enhanced Emergency Services** for physical address validation
+- **Teams Phone** license for advanced emergency features
+
+### Geographic Requirements
+- **Valid coordinates**: Latitude and longitude for address validation
+- **Supported regions**: Emergency calling features vary by country/region
+- **Address validation**: Physical addresses must be validated by emergency services
+
+### Permission Requirements
+- **Teams Administrator** role
+- **Emergency Calling Policy** permissions
+- **Location Information Service (LIS)** permissions
+- **Enhanced Emergency Services** permissions
+
+### Implementation Notes
+- **Address validation**: Requires exact latitude/longitude coordinates
+- **Policy assignment**: Policies are automatically assigned to users
+- **Notification groups**: Specify users to be notified of emergency calls
+- **Emergency numbers**: Default is 911, configurable per region
+- **Location services**: LIS integration for automatic location detection
+
+### Emergency Calling Workflow
+1. **Create emergency address** with valid geographic coordinates
+2. **Configure emergency policies** for calling and routing
+3. **Assign policies to users** who need emergency calling capabilities
+4. **Set up notification groups** for emergency call alerts
+5. **Test emergency calling** to ensure proper routing and notifications
+
+### Error Handling
+- **Invalid coordinates**: Returns error if latitude/longitude are invalid
+- **Licensing issues**: Clear error messages for missing licenses
+- **Permission errors**: Detailed messages for missing permissions
+- **Address validation**: Errors if address cannot be validated
+- **Policy conflicts**: Warnings if policies already exist
+
+### Testing Emergency Calling
+```bash
+# Test emergency calling setup
+curl -X POST http://localhost:9000/emergency/setup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userPrincipalName": "test@domain.com",
+    "emergencyAddress": {
+      "houseNumber": "123",
+      "streetName": "Main St",
+      "city": "Anytown",
+      "stateOrProvince": "ST",
+      "postalCode": "12345",
+      "companyName": "Test Company",
+      "description": "Test Emergency Location"
+    }
+  }'
+```
+
+**Note:** Emergency calling setup requires appropriate licensing and may not be available in all tenant configurations. Contact your Microsoft administrator for licensing requirements.

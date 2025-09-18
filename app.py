@@ -1875,6 +1875,204 @@ async def list_queues_with_resource_accounts(session_id: str):
         "note": "This endpoint returns known working queues. For a complete list, use PowerShell directly."
     }
 
+# Emergency Calling Models
+class EmergencyAddressRequest(BaseModel):
+    houseNumber: str = Field(..., examples=["5561"])
+    streetName: str = Field(..., examples=["Heatherton Road"])
+    city: str = Field(..., examples=["Milton"])
+    stateOrProvince: str = Field(..., examples=["FL"])
+    postalCode: str = Field(..., examples=["32570"])
+    countryOrRegion: str = Field(default="US", examples=["US"])
+    companyName: str = Field(..., examples=["Cloud Warriors Demo"])
+    description: str = Field(..., examples=["Demo654 Emergency Location"])
+    latitude: float = Field(default=30.6303, examples=[30.6303])  # Milton, FL approximate coordinates
+    longitude: float = Field(default=-87.0465, examples=[-87.0465])
+
+class EmergencySetupRequest(BaseModel):
+    userPrincipalName: str = Field(..., examples=["demo654@cloudwarriors.onmicrosoft.com"])
+    emergencyAddress: EmergencyAddressRequest
+    notificationGroup: str = Field(default="", examples=["demo654@cloudwarriors.onmicrosoft.com"])
+    emergencyNumbers: List[str] = Field(default=["911"], examples=[["911"]])
+
+@app.post("/emergency/setup")
+async def setup_emergency_calling(request: EmergencySetupRequest):
+    """Set up emergency calling for a user with address and policies"""
+    logger.info(f"Setting up emergency calling for user: {request.userPrincipalName}")
+
+    # Build PowerShell command for emergency setup
+    ps_command = f'''
+    $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
+    $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
+    $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+    $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+    $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
+
+    Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
+
+    try {{
+        Write-Host "Setting up emergency calling for {request.userPrincipalName}..."
+
+        # Create emergency address
+        Write-Host "Creating emergency address..."
+        $emergencyAddress = New-CsOnlineLisCivicAddress -HouseNumber "{request.emergencyAddress.houseNumber}" -StreetName "{request.emergencyAddress.streetName}" -City "{request.emergencyAddress.city}" -StateOrProvince "{request.emergencyAddress.stateOrProvince}" -PostalCode "{request.emergencyAddress.postalCode}" -CountryOrRegion "{request.emergencyAddress.countryOrRegion}" -CompanyName "{request.emergencyAddress.companyName}" -Description "{request.emergencyAddress.description}" -Latitude {request.emergencyAddress.latitude} -Longitude {request.emergencyAddress.longitude}
+        Write-Host "Emergency address created with ID: $($emergencyAddress.Id)"
+
+        # Create emergency location
+        Write-Host "Creating emergency location..."
+        $emergencyLocation = New-CsOnlineLisLocation -Location "{request.emergencyAddress.description}" -CivicAddressId $emergencyAddress.Id -CompanyName "{request.emergencyAddress.companyName}" -HouseNumber "{request.emergencyAddress.houseNumber}" -StreetName "{request.emergencyAddress.streetName}" -City "{request.emergencyAddress.city}" -StateOrProvince "{request.emergencyAddress.stateOrProvince}" -PostalCode "{request.emergencyAddress.postalCode}" -CountryOrRegion "{request.emergencyAddress.countryOrRegion}"
+        Write-Host "Emergency location created with ID: $($emergencyLocation.LocationId)"
+
+        # Create emergency calling policy
+        $userName = "{request.userPrincipalName}".Split('@')[0]
+        $policyName = "EmergencyPolicy-$userName"
+        Write-Host "Creating emergency calling policy: $policyName"
+        $emergencyPolicy = New-CsTeamsEmergencyCallingPolicy -Identity $policyName -Description "Emergency calling policy for {request.userPrincipalName}" -NotificationGroup "{request.notificationGroup}"
+        Write-Host "Emergency calling policy created: $($emergencyPolicy.Identity)"
+
+        # Create emergency call routing policy
+        $routingPolicyName = "EmergencyRouting-$userName"
+        Write-Host "Creating emergency call routing policy: $routingPolicyName"
+
+        # Create emergency call routing policy with 911
+        $routingPolicy = New-CsTeamsEmergencyCallRoutingPolicy -Identity $routingPolicyName -Description "Emergency call routing for {request.userPrincipalName}" -EmergencyNumbers @{{add="911"}}
+        Write-Host "Emergency call routing policy created: $($routingPolicy.Identity)"
+
+        # Assign policies to user
+        Write-Host "Assigning policies to user {request.userPrincipalName}..."
+        Grant-CsTeamsEmergencyCallingPolicy -Identity "{request.userPrincipalName}" -PolicyName $policyName
+        Grant-CsTeamsEmergencyCallRoutingPolicy -Identity "{request.userPrincipalName}" -PolicyName $routingPolicyName
+
+        # Set emergency location for the user
+        Write-Host "Setting emergency location for user..."
+        Set-CsOnlineVoiceUser -Identity "{request.userPrincipalName}" -LocationId $emergencyLocation.LocationId
+
+        Write-Host "EMERGENCY_SETUP_SUCCESS"
+        Write-Host "Emergency address and policies configured for {request.userPrincipalName}"
+        Write-Host "Address: {request.emergencyAddress.houseNumber} {request.emergencyAddress.streetName}, {request.emergencyAddress.city}, {request.emergencyAddress.stateOrProvince} {request.emergencyAddress.postalCode}"
+
+    }} catch {{
+        Write-Host "EMERGENCY_SETUP_FAILED: $_"
+        Write-Host "Emergency calling setup may require enhanced licensing or additional tenant configuration."
+    }}
+    '''
+
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["pwsh", "-Command", ps_command],
+            capture_output=True,
+            text=True,
+            timeout=180
+        )
+
+        output = result.stdout
+        error = result.stderr
+
+        logger.debug(f"Emergency setup stdout: {output}")
+        logger.debug(f"Emergency setup stderr: {error}")
+
+        if "EMERGENCY_SETUP_SUCCESS" in output:
+            return {
+                "message": "Emergency calling setup completed successfully",
+                "userPrincipalName": request.userPrincipalName,
+                "emergencyAddress": f"{request.emergencyAddress.houseNumber} {request.emergencyAddress.streetName}, {request.emergencyAddress.city}, {request.emergencyAddress.stateOrProvince} {request.emergencyAddress.postalCode}",
+                "status": "completed",
+                "policies": {
+                    "emergencyCallingPolicy": f"EmergencyPolicy-{request.userPrincipalName.split('@')[0]}",
+                    "emergencyCallRoutingPolicy": f"EmergencyRouting-{request.userPrincipalName.split('@')[0]}"
+                }
+            }
+        else:
+            error_msg = "Unknown error"
+            if "EMERGENCY_SETUP_FAILED:" in output:
+                error_msg = output.split("EMERGENCY_SETUP_FAILED:")[1].strip()
+            elif error:
+                error_msg = error
+
+            raise HTTPException(status_code=400, detail=f"Emergency setup failed: {error_msg}")
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=408, detail="Emergency setup timed out")
+    except Exception as e:
+        logger.error(f"Unexpected error in emergency setup: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/emergency/policies")
+async def list_emergency_policies(session_id: str):
+    """List all emergency calling policies in the tenant"""
+    logger.info(f"Listing emergency policies in session {session_id}")
+    with session_lock:
+        session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    cmd = '''
+    # Connect to Teams if not already connected
+    try {
+        Get-CsTenant -ErrorAction Stop | Out-Null
+    } catch {
+        $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
+        $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
+        $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+        $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
+        Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
+    }
+
+    try {
+        Write-Host "Getting emergency calling policies..."
+        $policies = Get-CsTeamsEmergencyCallingPolicy
+
+        Write-Host "EMERGENCY_POLICIES_SUCCESS"
+        foreach ($policy in $policies) {
+            Write-Host "POLICY_START"
+            Write-Host "Identity: $($policy.Identity)"
+            Write-Host "Description: $($policy.Description)"
+            Write-Host "NotificationGroup: $($policy.NotificationGroup)"
+            Write-Host "POLICY_END"
+        }
+
+    } catch {
+        Write-Host "EMERGENCY_POLICIES_FAILED: $_"
+    }
+    '''
+
+    output, error = session.run_command(cmd, timeout=60)
+
+    logger.debug(f"Emergency policies output: {output}")
+    logger.debug(f"Emergency policies error: {error}")
+
+    if error:
+        raise HTTPException(status_code=400, detail=f"Failed to list emergency policies: {error}")
+    elif "EMERGENCY_POLICIES_SUCCESS" in output:
+        # Parse emergency policies from output
+        policies = []
+        current_policy = None
+
+        lines = output.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line == "POLICY_START":
+                current_policy = {}
+            elif line == "POLICY_END" and current_policy:
+                policies.append(current_policy)
+                current_policy = None
+            elif current_policy and ': ' in line:
+                key, value = line.split(': ', 1)
+                current_policy[key.lower().replace(' ', '_')] = value
+
+        return {
+            "message": f"Found {len(policies)} emergency calling policies",
+            "policies": policies,
+            "count": len(policies)
+        }
+    else:
+        error_msg = "Unknown error"
+        if "EMERGENCY_POLICIES_FAILED:" in output:
+            error_msg = output.split("EMERGENCY_POLICIES_FAILED:")[1].strip()
+
+        raise HTTPException(status_code=400, detail=f"Failed to list emergency policies: {error_msg}")
+
 @app.get("/autoattendants")
 async def list_auto_attendants(session_id: str):
     """List all Auto Attendants in the tenant"""

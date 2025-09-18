@@ -30,6 +30,7 @@ auth-keys/
 *.pfx
 *.key
 *.crt
+auth-keys-backup.tar.gz
 
 # Environment variables
 .env
