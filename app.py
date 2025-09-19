@@ -7,6 +7,9 @@ import uuid
 import threading
 import re
 
+# PowerShell executable path
+PWSH_PATH = "/Users/cloudwarriors/MS-Teams-ETL/teams-sdk/powershell/pwsh"
+
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -21,7 +24,7 @@ session_lock = threading.Lock()
 class PowerShellSession:
     def __init__(self):
         self.process = subprocess.Popen(
-            ["pwsh", "-NoExit", "-Command", "Set-Location /root/code/teams-sdk"],
+            [PWSH_PATH, "-NoExit", "-Command", f"Set-Location /Users/cloudwarriors/MS-Teams-ETL/teams-sdk"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -288,7 +291,7 @@ async def create_user_direct(request: CreateUserRequest):
         # Execute PowerShell command
         import subprocess
         result = subprocess.run(
-            ["pwsh", "-Command", ps_command],
+            [PWSH_PATH, "-Command", ps_command],
             capture_output=True,
             text=True,
             timeout=120
@@ -579,7 +582,7 @@ async def create_team_direct(request: CreateTeamRequest):
     try:
         import subprocess
         result = subprocess.run(
-            ["pwsh", "-Command", ps_command],
+            [PWSH_PATH, "-Command", ps_command],
             capture_output=True,
             text=True,
             timeout=60
@@ -717,7 +720,7 @@ async def add_user_to_team_direct(team_id: str, request: AddUserToTeamRequest):
     try:
         import subprocess
         result = subprocess.run(
-            ["pwsh", "-Command", ps_command],
+            [PWSH_PATH, "-Command", ps_command],
             capture_output=True,
             text=True,
             timeout=30
@@ -988,7 +991,7 @@ async def create_call_queue_direct(request: CreateCallQueueRequest):
     try:
         import subprocess
         result = subprocess.run(
-            ["pwsh", "-Command", ps_command],
+            [PWSH_PATH, "-Command", ps_command],
             capture_output=True,
             text=True,
             timeout=120
@@ -1455,7 +1458,7 @@ async def create_auto_attendant_direct(request: CreateAutoAttendantRequest):
     try:
         import subprocess
         result = subprocess.run(
-            ["pwsh", "-Command", ps_command],
+            [PWSH_PATH, "-Command", ps_command],
             capture_output=True,
             text=True,
             timeout=120
@@ -2047,7 +2050,7 @@ async def setup_emergency_calling(request: EmergencySetupRequest):
     try:
         import subprocess
         result = subprocess.run(
-            ["pwsh", "-Command", ps_command],
+            [PWSH_PATH, "-Command", ps_command],
             capture_output=True,
             text=True,
             timeout=180
@@ -2237,3 +2240,254 @@ async def list_auto_attendants(session_id: str):
             error_msg = output.split("AUTOATTENDANTS_LIST_FAILED:")[1].strip()
 
         raise HTTPException(status_code=400, detail=f"Failed to list auto attendants: {error_msg}")
+
+class AddAgentRequest(BaseModel):
+    userPrincipalName: str
+    queueIds: List[str]
+
+class AddAgentToAllQueuesRequest(BaseModel):
+    userPrincipalName: str
+
+@app.post("/callqueues/add-agent")
+async def add_agent_to_queues(request: AddAgentRequest):
+    """Add an agent to multiple call queues"""
+    try:
+        # Build PowerShell script to add agent to multiple queues
+        queue_ids_str = "', '".join(request.queueIds)
+        
+        ps_command = f"""
+        $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
+        $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
+        $PfxPath = "/Users/cloudwarriors/MS-Teams-ETL/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+        $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
+        
+        Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
+        
+        # Get user information
+        try {{
+            $user = Get-CsOnlineUser -Identity '{request.userPrincipalName}'
+            if (-not $user) {{
+                Write-Host "ERROR_USER_NOT_FOUND"
+                exit 1
+            }}
+            Write-Host "User found: $($user.DisplayName) - ID: $($user.Identity)"
+            
+            $queueIds = @('{queue_ids_str}')
+            $successCount = 0
+            $errorCount = 0
+            $results = @()
+            
+            foreach ($queueId in $queueIds) {{
+                try {{
+                    # Get current call queue configuration
+                    $callQueue = Get-CsCallQueue -Identity $queueId
+                    Write-Host "Processing queue: $($callQueue.Name)"
+                    
+                    # Get current users list
+                    $currentUsers = @()
+                    if ($callQueue.Users) {{
+                        $currentUsers = $callQueue.Users
+                    }}
+                    
+                    # Add the new user if not already present
+                    $userId = $user.Identity
+                    if ($currentUsers -notcontains $userId) {{
+                        $newUsers = $currentUsers + $userId
+                        Set-CsCallQueue -Identity $queueId -Users $newUsers
+                        Write-Host "SUCCESS: Added $($user.DisplayName) to $($callQueue.Name)"
+                        $successCount++
+                        $results += "SUCCESS: $($callQueue.Name)"
+                    }} else {{
+                        Write-Host "INFO: User already present in $($callQueue.Name)"
+                        $successCount++
+                        $results += "ALREADY_PRESENT: $($callQueue.Name)"
+                    }}
+                }} catch {{
+                    Write-Host "ERROR: Failed to add user to queue $queueId - $_"
+                    $errorCount++
+                    $results += "ERROR: $queueId - $_"
+                }}
+            }}
+            
+            Write-Host "SUMMARY: Successfully processed $successCount queues, $errorCount errors"
+            Write-Host "AGENT_ADDITION_COMPLETE"
+            
+        }} catch {{
+            Write-Host "ERROR_GETTING_USER: $_"
+            exit 1
+        }}
+        """
+        
+        import subprocess
+        result = subprocess.run(
+            [PWSH_PATH, "-Command", ps_command],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        
+        if "ERROR_USER_NOT_FOUND" in result.stdout:
+            raise HTTPException(status_code=404, detail=f"User {request.userPrincipalName} not found")
+        
+        if "ERROR_GETTING_USER" in result.stdout:
+            raise HTTPException(status_code=400, detail=f"Error getting user: {result.stdout}")
+            
+        if result.returncode != 0 and "AGENT_ADDITION_COMPLETE" not in result.stdout:
+            raise HTTPException(status_code=400, detail=f"PowerShell error: {result.stderr}")
+        
+        # Parse results from output
+        output_lines = result.stdout.split('\n')
+        success_count = 0
+        error_count = 0
+        processed_queues = []
+        
+        for line in output_lines:
+            if "SUCCESS:" in line:
+                success_count += 1
+                queue_name = line.split("SUCCESS: ")[-1].strip()
+                processed_queues.append({"status": "success", "queue": queue_name})
+            elif "ALREADY_PRESENT:" in line:
+                success_count += 1
+                queue_name = line.split("ALREADY_PRESENT: ")[-1].strip()
+                processed_queues.append({"status": "already_present", "queue": queue_name})
+            elif "ERROR:" in line and "Failed to add user" in line:
+                error_count += 1
+                error_details = line.split("ERROR: ")[-1].strip()
+                processed_queues.append({"status": "error", "details": error_details})
+        
+        return {
+            "message": f"Agent {request.userPrincipalName} processed for {len(request.queueIds)} queues",
+            "user": request.userPrincipalName,
+            "total_queues": len(request.queueIds),
+            "successful": success_count,
+            "errors": error_count,
+            "results": processed_queues
+        }
+        
+    except Exception as e:
+        logger.error(f"Error adding agent to queues: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.post("/callqueues/add-agent-to-all")
+async def add_agent_to_all_color_queues(request: AddAgentToAllQueuesRequest):
+    """Add an agent to all color call queues"""
+    try:
+        # All color queue identities
+        color_queue_ids = [
+            '826f8e6d-21dd-404c-9506-9ec9eb46ffc9',  # Red
+            'de4cc8fc-0c8f-4528-be9d-002c607a565d',  # Blue
+            '4ac5f35b-c265-49ec-a7b0-53fd5207c092',  # Green
+            'e32fcc03-32fb-4016-aaf8-98e32f80ae5b',  # Yellow
+            '0a66aa5f-a29d-4e03-bcb4-fdc643a58233',  # Purple
+            'a94e3b70-76a7-4ce7-96a8-625df6a2457e',  # Orange
+            '6e93e0a1-2dfb-45b3-8383-e9c6f9994209',  # Pink
+            'c5674910-b615-4f20-b27b-309989c4ab93',  # Cyan
+            'f2e50fc6-ddd7-4659-9366-b0939055600f',  # Magenta
+            '7345e168-747f-4e8a-a614-60b6ca9c9495'   # Lime
+        ]
+        
+        queue_ids_str = "', '".join(color_queue_ids)
+        
+        ps_command = f"""
+        $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
+        $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
+        $PfxPath = "/Users/cloudwarriors/MS-Teams-ETL/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+        $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
+        
+        Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
+        
+        # Get user information
+        try {{
+            $user = Get-CsOnlineUser -Identity '{request.userPrincipalName}'
+            if (-not $user) {{
+                Write-Host "ERROR_USER_NOT_FOUND"
+                exit 1
+            }}
+            Write-Host "User found: $($user.DisplayName) - ID: $($user.Identity)"
+            
+            $queueIds = @('{queue_ids_str}')
+            $successCount = 0
+            $errorCount = 0
+            $queueNames = @()
+            
+            foreach ($queueId in $queueIds) {{
+                try {{
+                    # Get current call queue configuration
+                    $callQueue = Get-CsCallQueue -Identity $queueId
+                    Write-Host "Processing queue: $($callQueue.Name)"
+                    
+                    # Get current users list
+                    $currentUsers = @()
+                    if ($callQueue.Users) {{
+                        $currentUsers = $callQueue.Users
+                    }}
+                    
+                    # Add the new user if not already present
+                    $userId = $user.Identity
+                    if ($currentUsers -notcontains $userId) {{
+                        $newUsers = $currentUsers + $userId
+                        Set-CsCallQueue -Identity $queueId -Users $newUsers
+                        Write-Host "SUCCESS: Added $($user.DisplayName) to $($callQueue.Name)"
+                        $successCount++
+                    }} else {{
+                        Write-Host "INFO: User already present in $($callQueue.Name)"
+                        $successCount++
+                    }}
+                    $queueNames += $callQueue.Name
+                }} catch {{
+                    Write-Host "ERROR: Failed to add user to queue $queueId - $_"
+                    $errorCount++
+                }}
+            }}
+            
+            Write-Host "SUMMARY: Successfully processed $successCount queues, $errorCount errors"
+            Write-Host "ALL_COLOR_QUEUES_COMPLETE"
+            
+        }} catch {{
+            Write-Host "ERROR_GETTING_USER: $_"
+            exit 1
+        }}
+        """
+        
+        import subprocess
+        result = subprocess.run(
+            [PWSH_PATH, "-Command", ps_command],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        
+        if "ERROR_USER_NOT_FOUND" in result.stdout:
+            raise HTTPException(status_code=404, detail=f"User {request.userPrincipalName} not found")
+        
+        if "ERROR_GETTING_USER" in result.stdout:
+            raise HTTPException(status_code=400, detail=f"Error getting user: {result.stdout}")
+            
+        if result.returncode != 0 and "ALL_COLOR_QUEUES_COMPLETE" not in result.stdout:
+            raise HTTPException(status_code=400, detail=f"PowerShell error: {result.stderr}")
+        
+        # Parse results from output
+        output_lines = result.stdout.split('\n')
+        success_count = 0
+        error_count = 0
+        
+        for line in output_lines:
+            if "SUCCESS:" in line or "INFO: User already present" in line:
+                success_count += 1
+            elif "ERROR:" in line and "Failed to add user" in line:
+                error_count += 1
+        
+        return {
+            "message": f"Agent {request.userPrincipalName} added to all {len(color_queue_ids)} color call queues",
+            "user": request.userPrincipalName,
+            "total_color_queues": len(color_queue_ids),
+            "successful": success_count,
+            "errors": error_count,
+            "queues": ["Red", "Blue", "Green", "Yellow", "Purple", "Orange", "Pink", "Cyan", "Magenta", "Lime"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error adding agent to all color queues: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
