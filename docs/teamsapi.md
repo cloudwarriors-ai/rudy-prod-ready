@@ -78,6 +78,37 @@ This FastAPI server provides endpoints for managing Microsoft Teams users and te
 
 **Time:** ~3-4 seconds (reuses authenticated session)
 
+### GET /users?session_id={session_id} (List Users)
+**Description:** List users in the tenant with their Teams configuration and policies
+
+**Query Parameters:**
+- **result_size**: int (default 50) - Maximum number of users to return
+- **filter**: str (optional) - OData filter for user selection (e.g., "UserPrincipalName eq 'user@domain.com'")
+
+**Response:**
+```json
+{
+  "message": "Found 3 users",
+  "users": [
+    {
+      "identity": "user@domain.com",
+      "display_name": "John Doe",
+      "user_principal_name": "user@domain.com",
+      "sip_address": "user@domain.com",
+      "line_uri": "tel:+15551234567",
+      "online_voice_routing_policy": "PolicyName",
+      "teams_emergency_calling_policy": "EmergencyPolicy",
+      "teams_emergency_call_routing_policy": "EmergencyRoutingPolicy"
+    }
+  ],
+  "count": 3,
+  "filter": "none",
+  "result_size": 50
+}
+```
+
+**Time:** ~5-10 seconds
+**Note:** Returns comprehensive user information including phone numbers, voice routing policies, and emergency calling configuration
 ### POST /users?session_id={session_id} (Legacy)
 **Description:** Legacy endpoint, redirects to session-based approach.
 

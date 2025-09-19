@@ -421,6 +421,94 @@ async def create_user(session_id: str, request: CreateUserRequest):
     """Legacy endpoint - redirects to session-based approach"""
     return await create_user_session(session_id, request)
 
+@app.get("/users")
+async def list_users(session_id: str, result_size: int = 50, filter: str = ""):
+    """List users in the tenant"""
+    logger.info(f"Listing users in session {session_id}")
+    with session_lock:
+        session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Build filter for PowerShell command
+    filter_param = ""
+    if filter:
+        filter_param = f" -Filter \"{filter}\""
+
+    cmd = f'''
+    # Connect to Teams if not already connected
+    try {{
+        Get-CsTenant -ErrorAction Stop | Out-Null
+    }} catch {{
+        $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
+        $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
+        $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+        $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
+        Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
+    }}
+
+    try {{
+        Write-Host "Getting users from tenant..."
+        $users = Get-CsOnlineUser -ResultSize {result_size}{filter_param}
+
+        Write-Host "USERS_LIST_SUCCESS"
+        foreach ($user in $users) {{
+            Write-Host "USER_START"
+            Write-Host "Identity: \$($user.Identity)"
+            Write-Host "DisplayName: \$($user.DisplayName)"
+            Write-Host "UserPrincipalName: \$($user.UserPrincipalName)"
+            Write-Host "SipAddress: \$($user.SipAddress)"
+            Write-Host "LineUri: \$($user.LineUri)"
+            Write-Host "OnlineVoiceRoutingPolicy: \$($user.OnlineVoiceRoutingPolicy)"
+            Write-Host "TeamsEmergencyCallingPolicy: \$($user.TeamsEmergencyCallingPolicy)"
+            Write-Host "TeamsEmergencyCallRoutingPolicy: \$($user.TeamsEmergencyCallRoutingPolicy)"
+            Write-Host "USER_END"
+        }}
+
+    }} catch {{
+        Write-Host "USERS_LIST_FAILED: \$_"
+    }}
+    '''
+
+    output, error = session.run_command(cmd, timeout=60)
+
+    logger.debug(f"List users output: {output}")
+    logger.debug(f"List users error: {error}")
+
+    if error:
+        raise HTTPException(status_code=400, detail=f"Failed to list users: {error}")
+    elif "USERS_LIST_SUCCESS" in output:
+        # Parse users from output
+        users = []
+        current_user = None
+
+        lines = output.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line == "USER_START":
+                current_user = {}
+            elif line == "USER_END" and current_user:
+                users.append(current_user)
+                current_user = None
+            elif current_user and ': ' in line:
+                key, value = line.split(': ', 1)
+                current_user[key.lower().replace(' ', '_')] = value
+
+        return {
+            "message": f"Found {len(users)} users",
+            "users": users,
+            "count": len(users),
+            "filter": filter if filter else "none",
+            "result_size": result_size
+        }
+    else:
+        error_msg = "Unknown error"
+        if "USERS_LIST_FAILED:" in output:
+            error_msg = output.split("USERS_LIST_FAILED:")[1].strip()
+
+        raise HTTPException(status_code=400, detail=f"Failed to list users: {error_msg}")
+
 @app.post("/teams/direct")
 async def create_team_direct(request: CreateTeamRequest):
     """Create team directly using PowerShell - creates group then converts to team"""
