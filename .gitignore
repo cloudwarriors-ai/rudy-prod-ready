@@ -38,4 +38,4 @@ auth-keys-backup.tar.gz
 
 # Temporary files
 *.tmp
-*.temp
+*.temppowershell/
