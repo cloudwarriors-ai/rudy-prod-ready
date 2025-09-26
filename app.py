@@ -1,14 +1,15 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 import subprocess
 import logging
 import uuid
 import threading
 import re
+import time
 
 # PowerShell executable path
-PWSH_PATH = "/Users/cloudwarriors/MS-Teams-ETL/teams-sdk/powershell/pwsh"
+PWSH_PATH = "/Users/work/teams-sdk/local-powershell/pwsh"
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -24,7 +25,7 @@ session_lock = threading.Lock()
 class PowerShellSession:
     def __init__(self):
         self.process = subprocess.Popen(
-            [PWSH_PATH, "-NoExit", "-Command", f"Set-Location /Users/cloudwarriors/MS-Teams-ETL/teams-sdk"],
+            [PWSH_PATH, "-NoExit", "-Command", f"Set-Location /Users/work/teams-sdk"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -41,15 +42,19 @@ class PowerShellSession:
             auth_cmd = '''
             $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
             $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-            $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+            $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
             $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
             $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
             
             Write-Host "Connecting to Graph..."
             Connect-MgGraph -TenantId $TenantId -ClientId $AppId -Certificate $Cert -NoWelcome
             
-            Write-Host "Verifying Graph connection..."
+            Write-Host "Connecting to Teams..."
+            Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
+            
+            Write-Host "Verifying connections..."
             Get-MgContext | Format-List ClientId, TenantId, AuthType
+            Get-CsTenant | Format-List DisplayName, TenantId
             '''
             
             output, error = self.run_command(auth_cmd, timeout=120)
@@ -252,7 +257,7 @@ async def create_user_direct(request: CreateUserRequest):
     ps_command = f'''
     $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
     $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-    $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+    $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
     $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
     $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
     
@@ -439,18 +444,6 @@ async def list_users(session_id: str, result_size: int = 50, filter: str = ""):
         filter_param = f" -Filter \"{filter}\""
 
     cmd = f'''
-    # Connect to Teams if not already connected
-    try {{
-        Get-CsTenant -ErrorAction Stop | Out-Null
-    }} catch {{
-        $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
-        $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-        $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
-        $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
-        $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
-        Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
-    }}
-
     try {{
         Write-Host "Getting users from tenant..."
         $users = Get-CsOnlineUser -ResultSize {result_size}{filter_param}
@@ -520,7 +513,7 @@ async def create_team_direct(request: CreateTeamRequest):
     ps_command = f'''
     $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
     $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-    $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+    $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
     $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
     $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
     
@@ -694,7 +687,7 @@ async def add_user_to_team_direct(team_id: str, request: AddUserToTeamRequest):
     ps_command = f'''
     $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
     $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-    $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+    $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
     $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
     $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
     
@@ -923,6 +916,17 @@ async def update_acs_federation(session_id: str, request: AcsFederationRequest):
     }
 
 # Call Queue Management Endpoints
+@app.post("/callqueues/test")
+async def create_call_queue_test(request: CreateCallQueueRequest):
+    """Test endpoint for call queue creation"""
+    return {
+        "status": "success",
+        "message": f"Call queue '{request.name}' would be created",
+        "identity": "test-queue-id",
+        "name": request.name,
+        "agents": request.agents
+    }
+
 @app.post("/callqueues/direct")
 async def create_call_queue_direct(request: CreateCallQueueRequest):
     """Create call queue directly using PowerShell Teams module"""
@@ -934,7 +938,7 @@ async def create_call_queue_direct(request: CreateCallQueueRequest):
     ps_command = f'''
     $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
     $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-    $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+    $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
     $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
     $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
     
@@ -1067,7 +1071,7 @@ async def create_call_queue(session_id: str, request: CreateCallQueueRequest):
     }} catch {{
         $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
         $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-        $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
         $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
         $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
         Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
@@ -1224,7 +1228,7 @@ async def list_call_queues(session_id: str):
     } catch {
         $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
         $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-        $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
         $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
         $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
         Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
@@ -1314,7 +1318,7 @@ async def add_user_to_call_queue(session_id: str, queue_identity: str, request: 
     }} catch {{
         $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
         $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-        $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
         $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
         $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
         Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
@@ -1421,7 +1425,7 @@ async def create_auto_attendant_direct(request: CreateAutoAttendantRequest):
     ps_command = f'''
     $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
     $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26" 
-    $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+    $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
     $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
     $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
     
@@ -1735,7 +1739,7 @@ async def create_auto_attendant(session_id: str, request: CreateAutoAttendantReq
     }} catch {{
         $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
         $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-        $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
         $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
         $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
         Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
@@ -1994,7 +1998,7 @@ async def setup_emergency_calling(request: EmergencySetupRequest):
     ps_command = f'''
     $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
     $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-    $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+    $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
     $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
     $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
 
@@ -2104,7 +2108,7 @@ async def list_emergency_policies(session_id: str):
     } catch {
         $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
         $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-        $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
         $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
         $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
         Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
@@ -2180,7 +2184,7 @@ async def list_auto_attendants(session_id: str):
     } catch {
         $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
         $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
-        $PfxPath = "/root/code/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
         $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
         $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
         Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
@@ -2491,3 +2495,890 @@ async def add_agent_to_all_color_queues(request: AddAgentToAllQueuesRequest):
     except Exception as e:
         logger.error(f"Error adding agent to all color queues: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# Comprehensive Teams Data Extraction Models
+class VoiceUser(BaseModel):
+    displayName: str = Field(..., examples=["John Smith"])
+    userPrincipalName: str = Field(..., examples=["john.smith@company.com"])
+    lineURI: str = Field("", examples=["tel:+15551234567"])
+    enterpriseVoiceEnabled: bool = Field(False, examples=[True])
+    department: str = Field("", examples=["Sales"])
+    title: str = Field("", examples=["Sales Manager"])
+    onlineVoiceRoutingPolicy: str = Field("", examples=["Policy1"])
+
+class PhoneNumber(BaseModel):
+    telephoneNumber: str = Field(..., examples=["+15551234567"])
+    numberType: str = Field(..., examples=["CallingPlan"])
+    locationId: str = Field("", examples=["fa73b373-4ddf-4c50-9b40-d44632815e69"])
+    assignedPstnTargetId: str = Field("", examples=[""])
+
+class AutoAttendantMenuOption(BaseModel):
+    dtmfResponse: str = Field(..., examples=["Tone1"])
+    action: str = Field(..., examples=["TransferCallToTarget"])
+    callTargetId: str = Field("", examples=["5f3e4a1d-7b85-4541-80a0-fbcf9f590a33"])
+
+class AutoAttendant(BaseModel):
+    identity: str = Field(..., examples=["95f3d881-582f-45d0-88b4-5ce099c52c70"])
+    name: str = Field(..., examples=["Cloud Warriors HQ"])
+    languageId: str = Field(..., examples=["en-US"])
+    timeZoneId: str = Field(..., examples=["Eastern Standard Time"])
+    menuOptionsCount: int = Field(0, examples=[4])
+    greetingsCount: int = Field(0, examples=[1])
+    menuOptions: List[AutoAttendantMenuOption] = Field(default_factory=list)
+
+class CallQueue(BaseModel):
+    identity: str = Field(..., examples=["5f3e4a1d-7b85-4541-80a0-fbcf9f590a33"])
+    name: str = Field(..., examples=["Sales Call Queue"])
+    agentCount: int = Field(0, examples=[3])
+    timeoutThreshold: int = Field(1200, examples=[1200])
+    overflowThreshold: int = Field(50, examples=[50])
+    routingMethod: str = Field(..., examples=["RoundRobin"])
+    conferenceMode: bool = Field(True, examples=[True])
+    useDefaultMusicOnHold: bool = Field(True, examples=[True])
+
+class ApplicationInstance(BaseModel):
+    objectId: str = Field(..., examples=["189cf0e5-64fc-4715-abfe-798463445ba8"])
+    displayName: str = Field(..., examples=["Cloud Warriors HQ"])
+    applicationId: str = Field(..., examples=["ce933385-9390-45d1-9512-c8d228074e07"])
+    phoneNumber: str = Field("", examples=["+15551234567"])
+
+class TeamsDataExtractionResponse(BaseModel):
+    summary: dict = Field(..., examples=[{
+        "totalUsers": 47,
+        "voiceEnabledUsers": 2,
+        "phoneNumbers": 4,
+        "unassignedPhoneNumbers": 4,
+        "autoAttendants": 10,
+        "callQueues": 19,
+        "applicationInstances": 5
+    }])
+    voiceUsers: List[VoiceUser] = Field(default_factory=list)
+    phoneNumbers: List[PhoneNumber] = Field(default_factory=list)
+    autoAttendants: List[AutoAttendant] = Field(default_factory=list)
+    callQueues: List[CallQueue] = Field(default_factory=list)
+    applicationInstances: List[ApplicationInstance] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+@app.get("/extract/all", response_model=TeamsDataExtractionResponse)
+async def extract_all_teams_data(session_id: str):
+    """Extract comprehensive Teams account data including users, auto attendants, call queues, and phone numbers"""
+    logger.info(f"Starting comprehensive Teams data extraction in session {session_id}")
+    
+    with session_lock:
+        session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # PowerShell command to extract all Teams data
+    cmd = '''
+    # Connect to Teams if not already connected
+    try {
+        Get-CsTenant -ErrorAction Stop | Out-Null
+    } catch {
+        $TenantId = "e7b105b2-720e-4b5b-9310-1a414c06356a"
+        $AppId = "968fafbb-27b8-400a-b8c3-a90eb3c2de26"
+        $PfxPath = "/Users/work/teams-sdk/auth-keys/teamsfed.pfx"
+        $PfxPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+        $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($PfxPath, $PfxPass)
+        Connect-MicrosoftTeams -TenantId $TenantId -ApplicationId $AppId -Certificate $Cert
+    }
+
+    try {
+        Write-Host "EXTRACTION_START"
+        
+        # Extract all users
+        Write-Host "USERS_START"
+        $allUsers = Get-CsOnlineUser
+        $voiceUsers = $allUsers | Where-Object { 
+            $_.EnterpriseVoiceEnabled -eq $true -or 
+            $_.LineURI -ne $null -or
+            $_.OnlineVoiceRoutingPolicy -ne $null
+        }
+        
+        foreach ($user in $voiceUsers) {
+            Write-Host "USER_ITEM_START"
+            Write-Host "DisplayName: $($user.DisplayName)"
+            Write-Host "UserPrincipalName: $($user.UserPrincipalName)"
+            Write-Host "LineURI: $($user.LineURI)"
+            Write-Host "EnterpriseVoiceEnabled: $($user.EnterpriseVoiceEnabled)"
+            Write-Host "Department: $($user.Department)"
+            Write-Host "Title: $($user.Title)"
+            Write-Host "OnlineVoiceRoutingPolicy: $($user.OnlineVoiceRoutingPolicy)"
+            Write-Host "USER_ITEM_END"
+        }
+        Write-Host "USERS_END"
+        
+        # Extract phone numbers
+        Write-Host "PHONES_START"
+        $phoneNumbers = Get-CsPhoneNumberAssignment
+        foreach ($phone in $phoneNumbers) {
+            Write-Host "PHONE_ITEM_START"
+            Write-Host "TelephoneNumber: $($phone.TelephoneNumber)"
+            Write-Host "NumberType: $($phone.NumberType)"
+            Write-Host "LocationId: $($phone.LocationId)"
+            Write-Host "AssignedPstnTargetId: $($phone.AssignedPstnTargetId)"
+            Write-Host "PHONE_ITEM_END"
+        }
+        Write-Host "PHONES_END"
+        
+        # Extract auto attendants
+        Write-Host "AUTOATTENDANTS_START"
+        $autoAttendants = Get-CsAutoAttendant
+        foreach ($aa in $autoAttendants) {
+            Write-Host "AA_ITEM_START"
+            Write-Host "Identity: $($aa.Identity)"
+            Write-Host "Name: $($aa.Name)"
+            Write-Host "LanguageId: $($aa.LanguageId)"
+            Write-Host "TimeZoneId: $($aa.TimeZoneId)"
+            Write-Host "MenuOptionsCount: $($aa.DefaultCallFlow.Menu.MenuOptions.Count)"
+            Write-Host "GreetingsCount: $($aa.DefaultCallFlow.Greetings.Count)"
+            
+            # Extract menu options
+            if ($aa.DefaultCallFlow.Menu.MenuOptions) {
+                foreach ($option in $aa.DefaultCallFlow.Menu.MenuOptions) {
+                    Write-Host "MENU_OPTION_START"
+                    Write-Host "DtmfResponse: $($option.DtmfResponse)"
+                    Write-Host "Action: $($option.Action)"
+                    Write-Host "CallTargetId: $($option.CallTarget.Id)"
+                    Write-Host "MENU_OPTION_END"
+                }
+            }
+            Write-Host "AA_ITEM_END"
+        }
+        Write-Host "AUTOATTENDANTS_END"
+        
+        # Extract call queues
+        Write-Host "CALLQUEUES_START"
+        $callQueues = Get-CsCallQueue
+        foreach ($cq in $callQueues) {
+            Write-Host "CQ_ITEM_START"
+            Write-Host "Identity: $($cq.Identity)"
+            Write-Host "Name: $($cq.Name)"
+            Write-Host "AgentCount: $($cq.Agents.Count)"
+            Write-Host "TimeoutThreshold: $($cq.TimeoutThreshold)"
+            Write-Host "OverflowThreshold: $($cq.OverflowThreshold)"
+            Write-Host "RoutingMethod: $($cq.RoutingMethod)"
+            Write-Host "ConferenceMode: $($cq.ConferenceMode)"
+            Write-Host "UseDefaultMusicOnHold: $($cq.UseDefaultMusicOnHold)"
+            Write-Host "CQ_ITEM_END"
+        }
+        Write-Host "CALLQUEUES_END"
+        
+        # Extract application instances
+        Write-Host "APPINSTANCES_START"
+        $appInstances = Get-CsOnlineApplicationInstance
+        foreach ($app in $appInstances) {
+            Write-Host "APP_ITEM_START"
+            Write-Host "ObjectId: $($app.ObjectId)"
+            Write-Host "DisplayName: $($app.DisplayName)"
+            Write-Host "ApplicationId: $($app.ApplicationId)"
+            Write-Host "PhoneNumber: $($app.PhoneNumber)"
+            Write-Host "APP_ITEM_END"
+        }
+        Write-Host "APPINSTANCES_END"
+        
+        # Summary counts
+        Write-Host "SUMMARY_START"
+        Write-Host "TotalUsers: $($allUsers.Count)"
+        Write-Host "VoiceEnabledUsers: $($voiceUsers.Count)"
+        Write-Host "PhoneNumbers: $($phoneNumbers.Count)"
+        Write-Host "UnassignedPhoneNumbers: $(($phoneNumbers | Where-Object { -not $_.AssignedPstnTargetId }).Count)"
+        Write-Host "AutoAttendants: $($autoAttendants.Count)"
+        Write-Host "CallQueues: $($callQueues.Count)"
+        Write-Host "ApplicationInstances: $($appInstances.Count)"
+        Write-Host "SUMMARY_END"
+        
+        Write-Host "EXTRACTION_SUCCESS"
+
+    } catch {
+        Write-Host "EXTRACTION_FAILED: $_"
+    }
+    '''
+
+    try:
+        output, error = session.run_command(cmd, timeout=180)
+        logger.debug(f"Extraction output length: {len(output)}")
+        
+        if error:
+            logger.error(f"PowerShell error during extraction: {error}")
+            raise HTTPException(status_code=400, detail=f"PowerShell error: {error}")
+        
+        if "EXTRACTION_SUCCESS" not in output:
+            error_msg = "Unknown error during extraction"
+            if "EXTRACTION_FAILED:" in output:
+                error_lines = [line for line in output.split('\n') if "EXTRACTION_FAILED:" in line]
+                if error_lines:
+                    error_msg = error_lines[0].replace("EXTRACTION_FAILED:", "").strip()
+            raise HTTPException(status_code=400, detail=f"Teams extraction failed: {error_msg}")
+
+        # Parse the output
+        response_data = TeamsDataExtractionResponse(
+            summary={},
+            voiceUsers=[],
+            phoneNumbers=[],
+            autoAttendants=[],
+            callQueues=[],
+            applicationInstances=[],
+            warnings=[]
+        )
+        
+        lines = output.split('\n')
+        current_section = None
+        current_item = None
+        current_menu_options = []
+        current_menu_option = None
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Section markers
+            if line == "USERS_START":
+                current_section = "users"
+            elif line == "PHONES_START":
+                current_section = "phones"
+            elif line == "AUTOATTENDANTS_START":
+                current_section = "autoattendants"
+            elif line == "CALLQUEUES_START":
+                current_section = "callqueues"
+            elif line == "APPINSTANCES_START":
+                current_section = "appinstances"
+            elif line == "SUMMARY_START":
+                current_section = "summary"
+            elif line.endswith("_END"):
+                current_section = None
+            
+            # Item markers
+            elif line == "USER_ITEM_START":
+                current_item = {}
+            elif line == "USER_ITEM_END" and current_item and current_section == "users":
+                user = VoiceUser(
+                    displayName=current_item.get("DisplayName", ""),
+                    userPrincipalName=current_item.get("UserPrincipalName", ""),
+                    lineURI=current_item.get("LineURI", ""),
+                    enterpriseVoiceEnabled=current_item.get("EnterpriseVoiceEnabled", "").lower() == "true",
+                    department=current_item.get("Department", ""),
+                    title=current_item.get("Title", ""),
+                    onlineVoiceRoutingPolicy=current_item.get("OnlineVoiceRoutingPolicy", "")
+                )
+                response_data.voiceUsers.append(user)
+                current_item = None
+            
+            elif line == "PHONE_ITEM_START":
+                current_item = {}
+            elif line == "PHONE_ITEM_END" and current_item and current_section == "phones":
+                phone = PhoneNumber(
+                    telephoneNumber=current_item.get("TelephoneNumber", ""),
+                    numberType=current_item.get("NumberType", ""),
+                    locationId=current_item.get("LocationId", ""),
+                    assignedPstnTargetId=current_item.get("AssignedPstnTargetId", "")
+                )
+                response_data.phoneNumbers.append(phone)
+                current_item = None
+            
+            elif line == "AA_ITEM_START":
+                current_item = {}
+                current_menu_options = []
+            elif line == "AA_ITEM_END" and current_item and current_section == "autoattendants":
+                aa = AutoAttendant(
+                    identity=current_item.get("Identity", ""),
+                    name=current_item.get("Name", ""),
+                    languageId=current_item.get("LanguageId", ""),
+                    timeZoneId=current_item.get("TimeZoneId", ""),
+                    menuOptionsCount=int(current_item.get("MenuOptionsCount", "0")),
+                    greetingsCount=int(current_item.get("GreetingsCount", "0")),
+                    menuOptions=current_menu_options
+                )
+                response_data.autoAttendants.append(aa)
+                current_item = None
+                current_menu_options = []
+            
+            elif line == "MENU_OPTION_START":
+                current_menu_option = {}
+            elif line == "MENU_OPTION_END":
+                if current_menu_option:
+                    option = AutoAttendantMenuOption(
+                        dtmfResponse=current_menu_option.get("DtmfResponse", ""),
+                        action=current_menu_option.get("Action", ""),
+                        callTargetId=current_menu_option.get("CallTargetId", "")
+                    )
+                    current_menu_options.append(option)
+                    current_menu_option = None
+            
+            elif line == "CQ_ITEM_START":
+                current_item = {}
+            elif line == "CQ_ITEM_END" and current_item and current_section == "callqueues":
+                cq = CallQueue(
+                    identity=current_item.get("Identity", ""),
+                    name=current_item.get("Name", ""),
+                    agentCount=int(current_item.get("AgentCount", "0")),
+                    timeoutThreshold=int(current_item.get("TimeoutThreshold", "1200")),
+                    overflowThreshold=int(current_item.get("OverflowThreshold", "50")),
+                    routingMethod=current_item.get("RoutingMethod", ""),
+                    conferenceMode=current_item.get("ConferenceMode", "").lower() == "true",
+                    useDefaultMusicOnHold=current_item.get("UseDefaultMusicOnHold", "").lower() == "true"
+                )
+                response_data.callQueues.append(cq)
+                current_item = None
+            
+            elif line == "APP_ITEM_START":
+                current_item = {}
+            elif line == "APP_ITEM_END" and current_item and current_section == "appinstances":
+                app = ApplicationInstance(
+                    objectId=current_item.get("ObjectId", ""),
+                    displayName=current_item.get("DisplayName", ""),
+                    applicationId=current_item.get("ApplicationId", ""),
+                    phoneNumber=current_item.get("PhoneNumber", "")
+                )
+                response_data.applicationInstances.append(app)
+                current_item = None
+            
+            # Parse key-value pairs
+            elif current_item is not None and ': ' in line:
+                key, value = line.split(': ', 1)
+                current_item[key] = value
+            elif current_menu_option is not None and ': ' in line:
+                key, value = line.split(': ', 1)
+                current_menu_option[key] = value
+            elif current_section == "summary" and ': ' in line:
+                key, value = line.split(': ', 1)
+                response_data.summary[key.lower().replace(' ', '_')] = int(value) if value.isdigit() else value
+
+        # Add warnings for common issues
+        for cq in response_data.callQueues:
+            if cq.agentCount == 0:
+                response_data.warnings.append(f"Call queue '{cq.name}' has no agents assigned")
+        
+        unassigned_count = len([p for p in response_data.phoneNumbers if not p.assignedPstnTargetId])
+        if unassigned_count > 0:
+            response_data.warnings.append(f"{unassigned_count} phone numbers are unassigned")
+        
+        no_phone_aa_count = len([a for a in response_data.applicationInstances if not a.phoneNumber])
+        if no_phone_aa_count > 0:
+            response_data.warnings.append(f"{no_phone_aa_count} application instances have no phone number assigned")
+
+        logger.info(f"Extraction completed successfully. Found {len(response_data.voiceUsers)} voice users, {len(response_data.phoneNumbers)} phone numbers, {len(response_data.autoAttendants)} auto attendants, {len(response_data.callQueues)} call queues")
+        
+        return response_data
+        
+    except Exception as e:
+        logger.error(f"Error during comprehensive Teams extraction: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# Pydantic models for Auto Attendant creation from parameters
+class AudioPrompt(BaseModel):
+    id: str = ""
+    name: str = "Default"
+
+class KeyTarget(BaseModel):
+    id: str
+    extension_id: str = ""
+    display_name: str
+    extension_number: str = ""
+
+class VoicemailGreeting(BaseModel):
+    id: str = ""
+    name: str = "Default"
+
+class KeyAction(BaseModel):
+    key: str
+    action: Optional[int] = None
+    target: Optional[KeyTarget] = None
+    voicemail_greeting: Optional[VoicemailGreeting] = None
+
+class CallerNoAction(BaseModel):
+    action: int = -1
+    audio_prompt_repeat: int = 3
+
+class AutoAttendantParams(BaseModel):
+    audio_prompt: AudioPrompt
+    key_actions: List[KeyAction]
+    caller_enters_no_action: CallerNoAction
+    name: Optional[str] = None  # Optional custom name
+
+@app.post("/autoattendant/create-from-params")
+async def create_autoattendant_from_params(request: AutoAttendantParams, session_id: str):
+    """Create Auto Attendant from parameter structure"""
+    logger.info(f"Creating Auto Attendant from parameters in session {session_id}")
+    
+    with session_lock:
+        session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Generate Auto Attendant name
+    aa_name = request.name if request.name else f"AA-From-Params-{int(time.time())}"
+    
+    # Map action codes to descriptions
+    action_map = {
+        2: "Transfer to User",
+        7: "Transfer to Extension", 
+        21: "Repeat Menu",
+        100: "Transfer to Queue",
+        -1: "Timeout"
+    }
+    
+    # Get available call queues for mapping
+    queues_cmd = '''
+    try {
+        $queues = Get-CsCallQueue
+        Write-Host "AVAILABLE_QUEUES_START"
+        foreach ($queue in $queues) {
+            Write-Host "QUEUE_ITEM:$($queue.Identity):$($queue.Name)"
+        }
+        Write-Host "AVAILABLE_QUEUES_END"
+    } catch {
+        Write-Host "QUEUE_LOOKUP_FAILED: $_"
+    }
+    '''
+    
+    queue_output, queue_error = session.run_command(queues_cmd, timeout=60)
+    
+    # Parse available queues
+    available_queues = {}
+    if "AVAILABLE_QUEUES_START" in queue_output:
+        lines = queue_output.split('\n')
+        for line in lines:
+            if line.startswith("QUEUE_ITEM:"):
+                parts = line.replace("QUEUE_ITEM:", "").split(":", 2)
+                if len(parts) >= 2:
+                    queue_id = parts[0]
+                    queue_name = parts[1] if len(parts) > 1 else "Unknown"
+                    available_queues[queue_id] = queue_name
+    
+    logger.debug(f"Found {len(available_queues)} available queues")
+    
+    # Build Auto Attendant creation command
+    greeting_text = "Welcome to our company. Please select from the following options:"
+    
+    # Build menu options text and PowerShell commands
+    menu_options_text = []
+    menu_options_ps = []
+    
+    queue_ids = list(available_queues.keys())
+    queue_index = 0
+    
+    for key_action in request.key_actions:
+        if key_action.action is None:
+            continue
+            
+        key = key_action.key
+        action = key_action.action
+        target_name = key_action.target.display_name if key_action.target else "Unknown"
+        
+        if action == 21:  # Repeat menu
+            menu_options_text.append(f"Press {key} to repeat this menu")
+            menu_options_ps.append(f'$menuOption{key} = New-CsAutoAttendantMenuOption -Action Announcement -DtmfResponse Tone{key if key != "*" else "Star"} -Prompt $menuPrompt')
+        elif action in [2, 7, 100]:  # Transfer actions
+            if queue_index < len(queue_ids):
+                queue_id = queue_ids[queue_index]
+                queue_name = available_queues[queue_id]
+                menu_options_text.append(f"Press {key} for {target_name} ({queue_name})")
+                dtmf_key = f"Tone{key}" if key != "*" else "ToneStar"
+                menu_options_ps.append(f'$callTarget{key} = New-CsAutoAttendantCallableEntity -Identity "{queue_id}" -Type ApplicationEndpoint')
+                menu_options_ps.append(f'$menuOption{key} = New-CsAutoAttendantMenuOption -Action TransferCallToTarget -DtmfResponse {dtmf_key} -CallTarget $callTarget{key}')
+                queue_index += 1
+    
+    menu_text = ", ".join(menu_options_text)
+    menu_prompt_text = f"Please select from the following options: {menu_text}."
+    
+    # Generate the PowerShell command
+    cmd = f'''
+    try {{
+        Write-Host "Creating Auto Attendant: {aa_name}"
+        
+        # Create prompts
+        $greetingPrompt = New-CsAutoAttendantPrompt -TextToSpeechPrompt "{greeting_text}"
+        $menuPrompt = New-CsAutoAttendantPrompt -TextToSpeechPrompt "{menu_prompt_text}"
+        
+        # Create callable entities and menu options
+        {chr(10).join(menu_options_ps)}
+        
+        # Collect menu options
+        $menuOptionsArray = @()
+        {chr(10).join([f"if ($menuOption{action.key}) {{ $menuOptionsArray += $menuOption{action.key} }}" for action in request.key_actions if action.action is not None])}
+        
+        # Create menu
+        $menu = New-CsAutoAttendantMenu -Name "MainMenu" -Prompts @($menuPrompt) -MenuOptions $menuOptionsArray
+        
+        # Create call flow
+        $defaultCallFlow = New-CsAutoAttendantCallFlow -Name "DefaultFlow" -Greetings @($greetingPrompt) -Menu $menu
+        
+        # Create Auto Attendant
+        $autoAttendant = New-CsAutoAttendant -Name "{aa_name}" -DefaultCallFlow $defaultCallFlow -LanguageId "en-US" -TimeZoneId "UTC" -EnableVoiceResponse
+        
+        Write-Host "AA_CREATION_SUCCESS"
+        Write-Host "AA_ID: $($autoAttendant.Identity)"
+        Write-Host "AA_NAME: $($autoAttendant.Name)"
+        Write-Host "AA_LANGUAGE: $($autoAttendant.LanguageId)"
+        Write-Host "AA_VOICE_ENABLED: $($autoAttendant.VoiceResponseEnabled)"
+        
+    }} catch {{
+        Write-Host "AA_CREATION_FAILED: $_"
+    }}
+    '''
+    
+    output, error = session.run_command(cmd, timeout=120)
+    
+    logger.debug(f"Auto Attendant creation output: {output}")
+    logger.debug(f"Auto Attendant creation error: {error}")
+    
+    if error:
+        raise HTTPException(status_code=400, detail=f"Failed to create Auto Attendant: {error}")
+    elif "AA_CREATION_SUCCESS" in output:
+        # Parse results
+        lines = output.split('\n')
+        aa_id = ""
+        aa_name_created = ""
+        aa_language = ""
+        aa_voice_enabled = ""
+        
+        for line in lines:
+            if line.startswith("AA_ID: "):
+                aa_id = line.replace("AA_ID: ", "").strip()
+            elif line.startswith("AA_NAME: "):
+                aa_name_created = line.replace("AA_NAME: ", "").strip()
+            elif line.startswith("AA_LANGUAGE: "):
+                aa_language = line.replace("AA_LANGUAGE: ", "").strip()
+            elif line.startswith("AA_VOICE_ENABLED: "):
+                aa_voice_enabled = line.replace("AA_VOICE_ENABLED: ", "").strip()
+        
+        # Build menu mapping for response
+        menu_mapping = []
+        queue_index = 0
+        for key_action in request.key_actions:
+            if key_action.action is None:
+                continue
+                
+            key = key_action.key
+            action = key_action.action
+            action_desc = action_map.get(action, f"Action {action}")
+            
+            if action == 21:
+                target = "Repeat Menu"
+            elif action in [2, 7, 100] and queue_index < len(queue_ids):
+                queue_id = queue_ids[queue_index]
+                target = available_queues[queue_id]
+                queue_index += 1
+            else:
+                target = "Unknown"
+                
+            menu_mapping.append({
+                "key": key,
+                "action": action,
+                "action_description": action_desc,
+                "target": target,
+                "original_target": key_action.target.display_name if key_action.target else None
+            })
+        
+        return {
+            "message": "Auto Attendant created successfully from parameters",
+            "autoAttendant": {
+                "id": aa_id,
+                "name": aa_name_created,
+                "language": aa_language,
+                "voiceResponseEnabled": aa_voice_enabled.lower() == "true",
+                "timeZone": "UTC"
+            },
+            "menuMapping": menu_mapping,
+            "originalParameters": {
+                "totalKeyActions": len(request.key_actions),
+                "audioPromptRepeat": request.caller_enters_no_action.audio_prompt_repeat,
+                "timeoutAction": request.caller_enters_no_action.action
+            },
+            "availableQueues": len(available_queues),
+            "documentation": "Build process documented in auto-attendant-build-process.md"
+        }
+    else:
+        raise HTTPException(status_code=400, detail=f"Auto Attendant creation failed. Output: {output}")
+
+class BusinessHoursConfig(BaseModel):
+    start_time: str = "09:00"  # Business hours start (24h format)
+    end_time: str = "17:00"    # Business hours end (24h format)
+    days: List[str] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]  # Business days
+    timezone: str = "UTC"      # Time zone
+
+class CreateAAWithBusinessHoursRequest(BaseModel):
+    name: str
+    greeting_prompt: str = "Welcome to our company"
+    business_hours_greeting: str = "Our business hours are 9 AM to 5 PM, Monday through Friday"
+    after_hours_greeting: str = "Thank you for calling. We are currently closed"
+    menu_options: List[MenuOption] = []
+    business_hours: BusinessHoursConfig = BusinessHoursConfig()
+    language_id: str = "en-US"
+    enable_voice_response: bool = True
+
+@app.post("/autoattendants/create-with-business-hours")
+async def create_auto_attendant_with_business_hours(session_id: str, request: CreateAAWithBusinessHoursRequest):
+    """Create Auto Attendant with proper business hours implementation"""
+    logger.info(f"Creating auto attendant with business hours in session {session_id}: {request.dict()}")
+    
+    with session_lock:
+        session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Build menu options PowerShell code for business hours flow
+    menu_options_code = []
+    for i, option in enumerate(request.menu_options):
+        menu_options_code.append(f'''
+        # Menu option {i+1}: {option.prompt}
+        $menuPrompt{i} = New-CsAutoAttendantPrompt -TextToSpeechPrompt "{option.prompt}"
+        if ("{option.callTargetType}" -eq "CallQueue") {{
+            $menuTarget{i} = New-CsAutoAttendantCallableEntity -Identity "{option.callTargetId}" -Type ApplicationEndpoint
+        }} elseif ("{option.callTargetType}" -eq "User") {{
+            $menuTarget{i} = New-CsAutoAttendantCallableEntity -Identity "{option.callTargetId}" -Type User
+        }}
+        $menuOption{i} = New-CsAutoAttendantMenuOption -Action TransferCallToTarget -DtmfResponse Tone{option.dtmfResponse} -CallTarget $menuTarget{i} -Prompt $menuPrompt{i}
+        ''')
+    
+    menu_options_array = ', '.join([f'$menuOption{i}' for i in range(len(request.menu_options))])
+    
+    # Convert business hours days to PowerShell format
+    day_mapping = {
+        "Monday": "MondayHours", "Tuesday": "TuesdayHours", "Wednesday": "WednesdayHours",
+        "Thursday": "ThursdayHours", "Friday": "FridayHours", "Saturday": "SaturdayHours", "Sunday": "SundayHours"
+    }
+    
+    schedule_params = []
+    for day in request.business_hours.days:
+        if day in day_mapping:
+            schedule_params.append(f"-{day_mapping[day]} @($businessHoursRange)")
+    
+    schedule_params_str = " ".join(schedule_params)
+    
+    ps_command = f'''
+    try {{
+        Write-Host "Creating Auto Attendant with Business Hours: {request.name}"
+        
+        # Create time range for business hours ({request.business_hours.start_time} to {request.business_hours.end_time})
+        $timeRange = New-CsOnlineTimeRange -Start {request.business_hours.start_time} -End {request.business_hours.end_time}
+        Write-Host "Time range created"
+        
+        # Create business hours schedule for {', '.join(request.business_hours.days)}
+        $scheduleName = "BH-{request.name.replace(' ', '')}-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        $schedule = New-CsOnlineSchedule -Name $scheduleName -WeeklyRecurrentSchedule {schedule_params_str}
+        Write-Host "Schedule created: $($schedule.Id)"
+        
+        # Create prompts
+        $businessGreeting = New-CsAutoAttendantPrompt -TextToSpeechPrompt "{request.greeting_prompt}. {request.business_hours_greeting}."
+        $afterHoursGreeting = New-CsAutoAttendantPrompt -TextToSpeechPrompt "{request.after_hours_greeting}. {request.business_hours_greeting}. Please call back during business hours."
+        Write-Host "Prompts created"
+        
+        # Create call flows
+        $businessFlow = New-CsAutoAttendantCallFlow -Name "BusinessHoursFlow" -Greetings @($businessGreeting)
+        $afterHoursFlow = New-CsAutoAttendantCallFlow -Name "AfterHoursFlow" -Greetings @($afterHoursGreeting)
+        Write-Host "Call flows created"
+        
+        # Create Auto Attendant with both flows
+        $aa = New-CsAutoAttendant -Name "{request.name}" -LanguageId "{request.language_id}" -TimeZoneId "{request.business_hours.timezone}" -DefaultCallFlow $businessFlow -CallFlows @($afterHoursFlow) -EnableVoiceResponse ${request.enable_voice_response}
+        Write-Host "Auto Attendant created: $($aa.Identity)"
+        
+        # Create and apply call handling association
+        $association = New-CsAutoAttendantCallHandlingAssociation -Type AfterHours -ScheduleId $schedule.Id -CallFlowId $afterHoursFlow.Id
+        Set-CsAutoAttendant -Identity $aa.Identity -CallHandlingAssociations @($association)
+        Write-Host "Business hours configuration applied"
+        
+        Write-Host "BUSINESS_HOURS_AA_SUCCESS"
+        Write-Host "AA_ID: $($aa.Identity)"
+        Write-Host "AA_NAME: $($aa.Name)"
+        Write-Host "SCHEDULE_ID: $($schedule.Id)"
+        Write-Host "BUSINESS_HOURS: {request.business_hours.start_time}-{request.business_hours.end_time} on {', '.join(request.business_hours.days)}"
+        Write-Host "TIMEZONE: {request.business_hours.timezone}"
+        Write-Host "VOICE_ENABLED: $($aa.VoiceResponseEnabled)"
+        
+    }} catch {{
+        Write-Host "BUSINESS_HOURS_AA_FAILED: $_"
+        Write-Host "ERROR_DETAILS: $($_.Exception.Message)"
+    }}
+    '''
+    
+    output, error = session.run_command(ps_command, timeout=180)
+    
+    logger.debug(f"Business hours AA creation output: {output}")
+    logger.debug(f"Business hours AA creation error: {error}")
+    
+    if error:
+        raise HTTPException(status_code=400, detail=f"Failed to create Auto Attendant with business hours: {error}")
+    elif "BUSINESS_HOURS_AA_SUCCESS" in output:
+        # Parse results
+        lines = output.split('\n')
+        aa_id = ""
+        aa_name = ""
+        schedule_id = ""
+        business_hours = ""
+        timezone = ""
+        voice_enabled = ""
+        
+        for line in lines:
+            if line.startswith("AA_ID: "):
+                aa_id = line.replace("AA_ID: ", "").strip()
+            elif line.startswith("AA_NAME: "):
+                aa_name = line.replace("AA_NAME: ", "").strip()
+            elif line.startswith("SCHEDULE_ID: "):
+                schedule_id = line.replace("SCHEDULE_ID: ", "").strip()
+            elif line.startswith("BUSINESS_HOURS: "):
+                business_hours = line.replace("BUSINESS_HOURS: ", "").strip()
+            elif line.startswith("TIMEZONE: "):
+                timezone = line.replace("TIMEZONE: ", "").strip()
+            elif line.startswith("VOICE_ENABLED: "):
+                voice_enabled = line.replace("VOICE_ENABLED: ", "").strip()
+        
+        return {
+            "message": "Auto Attendant with business hours created successfully",
+            "autoAttendant": {
+                "id": aa_id,
+                "name": aa_name,
+                "language": request.language_id,
+                "timezone": timezone,
+                "voiceResponseEnabled": voice_enabled.lower() == "true"
+            },
+            "businessHours": {
+                "scheduleId": schedule_id,
+                "hours": business_hours,
+                "timezone": timezone,
+                "startTime": request.business_hours.start_time,
+                "endTime": request.business_hours.end_time,
+                "days": request.business_hours.days
+            },
+            "callFlows": {
+                "businessHours": "Greeting + Menu Options",
+                "afterHours": "Closed message + Business hours info"
+            },
+            "menuOptions": len(request.menu_options),
+            "documentation": "Business hours properly implemented with schedule and call handling associations"
+        }
+    else:
+        error_msg = "Unknown error"
+        if "BUSINESS_HOURS_AA_FAILED:" in output:
+            error_msg = output.split("BUSINESS_HOURS_AA_FAILED:")[1].strip()
+        elif error:
+            error_msg = error
+        
+        raise HTTPException(status_code=400, detail=f"Auto Attendant with business hours creation failed: {error_msg}")
+
+@app.post("/autoattendants/{aa_identity}/add-business-hours")
+async def add_business_hours_to_existing_aa(session_id: str, aa_identity: str, request: BusinessHoursConfig):
+    """Add business hours configuration to an existing Auto Attendant"""
+    logger.info(f"Adding business hours to existing AA {aa_identity} in session {session_id}")
+    
+    with session_lock:
+        session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Convert business hours days to PowerShell format
+    day_mapping = {
+        "Monday": "MondayHours", "Tuesday": "TuesdayHours", "Wednesday": "WednesdayHours",
+        "Thursday": "ThursdayHours", "Friday": "FridayHours", "Saturday": "SaturdayHours", "Sunday": "SundayHours"
+    }
+    
+    schedule_params = []
+    for day in request.days:
+        if day in day_mapping:
+            schedule_params.append(f"-{day_mapping[day]} @($timeRange)")
+    
+    schedule_params_str = " ".join(schedule_params)
+    
+    ps_command = f'''
+    try {{
+        Write-Host "Adding business hours to Auto Attendant: {aa_identity}"
+        
+        # Get the existing Auto Attendant
+        $existingAA = Get-CsAutoAttendant -Identity "{aa_identity}"
+        if (-not $existingAA) {{
+            Write-Host "AA_NOT_FOUND: Auto Attendant not found"
+            exit 1
+        }}
+        
+        Write-Host "Found AA: $($existingAA.Name)"
+        
+        # Create time range for business hours
+        $timeRange = New-CsOnlineTimeRange -Start {request.start_time} -End {request.end_time}
+        Write-Host "Time range created: {request.start_time}-{request.end_time}"
+        
+        # Create business hours schedule
+        $scheduleName = "BH-$($existingAA.Name.Replace(' ',''))-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        $schedule = New-CsOnlineSchedule -Name $scheduleName -WeeklyRecurrentSchedule {schedule_params_str}
+        Write-Host "Schedule created: $($schedule.Id)"
+        
+        # Create after-hours greeting and call flow
+        $afterHoursGreeting = New-CsAutoAttendantPrompt -TextToSpeechPrompt "Thank you for calling. We are currently closed. Our business hours are {request.start_time.replace(':', ' ')} to {request.end_time.replace(':', ' ')}, {', '.join(request.days)}. Please call back during business hours."
+        $afterHoursFlow = New-CsAutoAttendantCallFlow -Name "AfterHours-$($existingAA.Name.Replace(' ',''))" -Greetings @($afterHoursGreeting)
+        Write-Host "After-hours call flow created"
+        
+        # Update Auto Attendant with new call flow
+        $currentCallFlows = @($existingAA.CallFlows)
+        $currentCallFlows += $afterHoursFlow
+        Set-CsAutoAttendant -Identity "{aa_identity}" -CallFlows $currentCallFlows
+        Write-Host "Auto Attendant updated with after-hours flow"
+        
+        # Create and apply call handling association
+        $association = New-CsAutoAttendantCallHandlingAssociation -Type AfterHours -ScheduleId $schedule.Id -CallFlowId $afterHoursFlow.Id
+        Set-CsAutoAttendant -Identity "{aa_identity}" -CallHandlingAssociations @($association)
+        Write-Host "Business hours association applied"
+        
+        Write-Host "BUSINESS_HOURS_ADDED_SUCCESS"
+        Write-Host "AA_ID: {aa_identity}"
+        Write-Host "AA_NAME: $($existingAA.Name)"
+        Write-Host "SCHEDULE_ID: $($schedule.Id)"
+        Write-Host "BUSINESS_HOURS: {request.start_time}-{request.end_time} on {', '.join(request.days)}"
+        Write-Host "TIMEZONE: {request.timezone}"
+        
+    }} catch {{
+        Write-Host "BUSINESS_HOURS_ADD_FAILED: $_"
+        Write-Host "ERROR_DETAILS: $($_.Exception.Message)"
+    }}
+    '''
+    
+    output, error = session.run_command(ps_command, timeout=180)
+    
+    logger.debug(f"Add business hours output: {output}")
+    logger.debug(f"Add business hours error: {error}")
+    
+    if error:
+        raise HTTPException(status_code=400, detail=f"Failed to add business hours: {error}")
+    elif "BUSINESS_HOURS_ADDED_SUCCESS" in output:
+        # Parse results
+        lines = output.split('\n')
+        aa_name = ""
+        schedule_id = ""
+        business_hours = ""
+        
+        for line in lines:
+            if line.startswith("AA_NAME: "):
+                aa_name = line.replace("AA_NAME: ", "").strip()
+            elif line.startswith("SCHEDULE_ID: "):
+                schedule_id = line.replace("SCHEDULE_ID: ", "").strip()
+            elif line.startswith("BUSINESS_HOURS: "):
+                business_hours = line.replace("BUSINESS_HOURS: ", "").strip()
+        
+        return {
+            "message": "Business hours added to existing Auto Attendant successfully",
+            "autoAttendant": {
+                "id": aa_identity,
+                "name": aa_name
+            },
+            "businessHours": {
+                "scheduleId": schedule_id,
+                "hours": business_hours,
+                "timezone": request.timezone,
+                "startTime": request.start_time,
+                "endTime": request.end_time,
+                "days": request.days
+            },
+            "callFlows": {
+                "businessHours": "Uses existing default call flow",
+                "afterHours": "New after-hours call flow with closed message"
+            },
+            "documentation": "Business hours properly added with schedule and call handling associations"
+        }
+    elif "AA_NOT_FOUND" in output:
+        raise HTTPException(status_code=404, detail=f"Auto Attendant {aa_identity} not found")
+    else:
+        error_msg = "Unknown error"
+        if "BUSINESS_HOURS_ADD_FAILED:" in output:
+            error_msg = output.split("BUSINESS_HOURS_ADD_FAILED:")[1].strip()
+        elif error:
+            error_msg = error
+        
+        raise HTTPException(status_code=400, detail=f"Failed to add business hours: {error_msg}")

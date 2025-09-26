@@ -16,7 +16,20 @@ teams-sdk/
 │   ├── azureconfig.md           # Azure configuration guide
 │   ├── CALL_QUEUE_ENDPOINTS.md  # Call queue integration guide
 │   ├── create_documentation.md  # Documentation creation guide
-│   └── research.md              # Research and references
+│   ├── research.md              # Research and references
+│   ├── emergency-addresses.md   # 🚨 Emergency Address Configuration
+│   └── auto-attendant/          # 🎯 Auto Attendant Documentation
+│       ├── README.md            # AA documentation index & quick start
+│       ├── auto-attendant-build-process.md  # Complete build guide + API reference
+│       ├── auto-attendant-fields.md         # Field definitions & parameters
+│       ├── aa-analysis.md                   # Technical analysis & insights
+│       ├── BUSINESS_HOURS_SOLUTION.md       # Business hours implementation
+│       ├── BUSINESS_HOURS_COMPLETE.md       # Business hours status
+│       ├── test_aa_params.json              # Sample parameters & schemas
+│       └── scripts/                         # PowerShell scripts & examples
+│           ├── README.md                    # Script documentation & patterns
+│           ├── test-autoattendant-creation.ps1
+│           └── test-business-hours-schedules.ps1
 │
 ├── 📁 auth-keys/                # 🔐 Authentication certificates
 │   ├── teamsfed.pfx             # PKCS#12 certificate bundle

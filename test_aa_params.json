@@ -1,0 +1,64 @@
+{
+    "audio_prompt": {
+        "id": "",
+        "name": "Default"
+    },
+    "key_actions": [
+        {
+            "key": "0",
+            "action": 100,
+            "target": {
+                "id": "OH23FO91TEOjlYI2-91FRQ",
+                "extension_id": "i4uxYy0wTBGbr_KKm4SLhg",
+                "display_name": "Rudy - MS Teams ETL",
+                "extension_number": "999052"
+            },
+            "voicemail_greeting": {
+                "id": "",
+                "name": "Default"
+            }
+        },
+        {
+            "key": "1",
+            "action": 2,
+            "target": {
+                "id": "wc7WZVkGRMGcNWOYTksTvQ",
+                "extension_id": "2_PyovMEReKOmQEaDwQWJQ",
+                "display_name": "John Rudolph",
+                "extension_number": "999023"
+            }
+        },
+        {
+            "key": "2",
+            "action": 2,
+            "target": {
+                "id": "vBCwaIlxSQWTWXCaatO6-g",
+                "extension_id": "_iFkHKXKRtq5Lz3bGAb7yw",
+                "display_name": "Tyler Pratt",
+                "extension_number": "625"
+            }
+        },
+        {
+            "key": "3",
+            "action": 7,
+            "target": {
+                "id": "ESvaVhtHTHGcjZKrA6OyuQ",
+                "extension_id": "B50oTqvzTg-4zx7VCYpvkA",
+                "display_name": "Opencode-Tyler",
+                "extension_number": "13245"
+            }
+        },
+        {
+            "key": "4"
+        },
+        {
+            "key": "*",
+            "action": 21
+        }
+    ],
+    "caller_enters_no_action": {
+        "action": -1,
+        "audio_prompt_repeat": 3
+    },
+    "name": "Custom-AA-From-API"
+}
